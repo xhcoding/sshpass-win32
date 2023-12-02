@@ -248,9 +248,6 @@ static BOOL IsWaitInputPass(Context* ctx, const char* buffer, DWORD len) {
     if (pos == NULL) {
         return FALSE;
     }
-    if (*(pos + 9) != 27) {
-        return FALSE;
-    }
     return TRUE;
 }
 
