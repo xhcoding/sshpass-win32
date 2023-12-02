@@ -1,0 +1,25 @@
+name: build
+on: [ push, pull_request ]
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: setenv
+        run: echo "ACTIONS_ALLOW_UNSECURE_COMMANDS=true" >> $GITHUB_ENV
+
+      - uses: actions/checkout@v3
+
+      - uses: jwlawson/actions-setup-cmake@v1.13
+      
+      - name: configure
+        run: cmake -S . -B build -G"Visual Studio 17 2022"
+
+      - name: build
+        run: cmake --build build --config release
+
+      - name: Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+            files: build/Release/sshpass.exe
