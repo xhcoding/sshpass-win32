@@ -3,12 +3,13 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <strsafe.h>
 
 #include "argparse.h"
 
 static const char* const usages[] = {
-        "sshpass [ options ] command",
+        "sshpass [options] command arguments",
         NULL,
 };
 
@@ -23,7 +24,7 @@ typedef struct {
     const char* passPrompt;
     int verbose;
 
-    const char* cmd;
+    char* cmd;
 } Args;
 
 typedef struct {
@@ -48,13 +49,6 @@ int main(int argc, const char* argv[]) {
     Context ctx;
 
     ParseArgs(argc, argv, &ctx);
-
-    if (ctx.args.verbose) {
-        fprintf(stdout, "cmd: %s\n", ctx.args.cmd);
-        if (ctx.args.pwtype == PWT_PASS) {
-            fprintf(stdout, "password: |%s|\n", ctx.args.pwsrc.password);
-        }
-    }
 
     HRESULT hr = E_UNEXPECTED;
 
@@ -144,7 +138,7 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
     };
 
     struct argparse argparse;
-    argparse_init(&argparse, options, usages, 0);
+    argparse_init(&argparse, options, usages, ARGPARSE_STOP_AT_NON_OPTION);
     argc = argparse_parse(&argparse, argc, argv);
     if (argc == 0) {
         argparse_usage(&argparse);
@@ -174,7 +168,21 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
         ctx->args.passPrompt = "password:";
     }
 
-    ctx->args.cmd = argv[0];
+    int cmdLen = 0;
+    for (int i = 0; i < argc; i++) {
+        cmdLen += strlen(argv[i]) + 2;
+    }
+
+    ctx->args.cmd = malloc(sizeof(char) * cmdLen);
+    memset(ctx->args.cmd, 0, sizeof(char) * cmdLen);
+    for (int i = 0; i < argc; i++) {
+        StringCchCatA(ctx->args.cmd, sizeof(char) * cmdLen, argv[i]);
+        StringCchCatA(ctx->args.cmd, sizeof(char) * cmdLen, " ");
+    }
+
+    if (ctx->args.verbose) {
+        fprintf(stdout, "cmd: %s\n", ctx->args.cmd);
+    }
 }
 
 static HRESULT CreatePseudoConsoleAndPipes(HPCON* hpcon, Context* ctx) {

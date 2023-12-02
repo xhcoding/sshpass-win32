@@ -11,7 +11,7 @@ To run sshpass, you must install:
 # Usage
 
 ```sh
-Usage: sshpass [ options ] command
+Usage: sshpass [ options ] command arguments
 
     -h, --help    show this help message and exit
 
@@ -29,5 +29,5 @@ Other options:
 # Examples
 
 ```sh
-sshpass.exe -p 12345 "ssh xhcoding@192.168.139.128 ls"
+sshpass.exe -p 12345 ssh xhcoding@192.168.139.128 ls
 ```
