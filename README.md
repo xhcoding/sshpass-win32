@@ -29,5 +29,9 @@ Other options:
 # Examples
 
 ```sh
-sshpass.exe -p 12345 ssh xhcoding@192.168.139.128 ls
+sshpass -p 12345 ssh xhcoding@192.168.139.128 ls
+```
+
+```sh
+sshpass -p 12345 rsync -avz -e 'c:/Users/xhcoding/scoop/apps/cwrsync/current/bin/ssh.exe' README.md xhcoding@192.168.139.128:/home/xhcoding/
 ```
