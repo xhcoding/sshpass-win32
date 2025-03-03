@@ -1,4 +1,4 @@
-#include <Windows.h>
+﻿#include <Windows.h>
 #include <process.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -44,6 +44,7 @@ static HRESULT CreatePseudoConsoleAndPipes(HPCON* hpcon, Context* ctx);
 static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXA* startupInfo,
                                                             HPCON hpcon);
 static void __cdecl PipeListener(LPVOID);
+static void __cdecl InputHandlerThread(LPVOID);
 
 int main(int argc, const char* argv[]) {
     Context ctx;
@@ -83,6 +84,9 @@ int main(int argc, const char* argv[]) {
 
                 if (S_OK == hr) {
                     ctx.events[1] = cmdProc.hThread;
+
+                    HANDLE inputHandler = (HANDLE) _beginthread(InputHandlerThread, 0, &ctx);
+
                     WaitForMultipleObjects(sizeof(ctx.events) / sizeof(HANDLE), ctx.events, FALSE,
                                            INFINITE);
                 }
@@ -355,4 +359,28 @@ static void WritePass(Context* ctx) {
 
     } break;
     }
+}
+
+static void __cdecl InputHandlerThread(LPVOID arg) {
+    Context* ctx = arg;
+    HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+    DWORD mode;
+
+    GetConsoleMode(hStdin, &mode);
+    SetConsoleMode(hStdin, (mode & ~ENABLE_LINE_INPUT) & ~ENABLE_ECHO_INPUT);
+
+    char buffer;
+    DWORD bytesRead, bytesWritten;
+
+    while (1) {
+        if (!ReadFile(hStdin, &buffer, 1, &bytesRead, NULL) || bytesRead == 0) {
+            break;
+        }
+
+        if (!WriteFile(ctx->pipeOut, &buffer, 1, &bytesWritten, NULL)) {
+            break;
+        }
+    }
+
+    SetConsoleMode(hStdin, mode);
 }
