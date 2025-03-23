@@ -63,54 +63,50 @@ int main(int argc, const char* argv[]) {
 
     DWORD consoleMode = 0;
     GetConsoleMode(ctx.stdOut, &consoleMode);
-    hr = SetConsoleMode(ctx.stdOut, consoleMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
-                 ? S_OK
-                 : GetLastError();
+    SetConsoleMode(ctx.stdOut, consoleMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+
+    HPCON hpcon = INVALID_HANDLE_VALUE;
+
+    hr = CreatePseudoConsoleAndPipes(&hpcon, &ctx);
     if (S_OK == hr) {
-        HPCON hpcon = INVALID_HANDLE_VALUE;
+        HANDLE pipeListener = (HANDLE) _beginthread(PipeListener, 0, &ctx);
 
-        hr = CreatePseudoConsoleAndPipes(&hpcon, &ctx);
-        if (S_OK == hr) {
-            HANDLE pipeListener = (HANDLE) _beginthread(PipeListener, 0, &ctx);
+        STARTUPINFOEXA startupInfo = {0};
+        if (S_OK == InitializeStartupInfoAttachedToPseudoConsole(&startupInfo, hpcon)) {
+            PROCESS_INFORMATION cmdProc;
+            hr = CreateProcessA(NULL, (char*) ctx.args.cmd, NULL, NULL, FALSE,
+                                EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
+                                &startupInfo.StartupInfo, &cmdProc)
+                            ? S_OK
+                            : GetLastError();
 
-            STARTUPINFOEXA startupInfo = {0};
-            if (S_OK == InitializeStartupInfoAttachedToPseudoConsole(&startupInfo, hpcon)) {
-                PROCESS_INFORMATION cmdProc;
-                hr = CreateProcessA(NULL, (char*) ctx.args.cmd, NULL, NULL, FALSE,
-                                    EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
-                                    &startupInfo.StartupInfo, &cmdProc)
-                             ? S_OK
-                             : GetLastError();
+            if (S_OK == hr) {
+                ctx.events[1] = cmdProc.hThread;
 
-                if (S_OK == hr) {
-                    ctx.events[1] = cmdProc.hThread;
+                HANDLE inputHandler = (HANDLE) _beginthread(InputHandlerThread, 0, &ctx);
 
-                    HANDLE inputHandler = (HANDLE) _beginthread(InputHandlerThread, 0, &ctx);
-
-                    WaitForMultipleObjects(sizeof(ctx.events) / sizeof(HANDLE), ctx.events, FALSE,
-                                           INFINITE);
-                }
-
-                CloseHandle(cmdProc.hThread);
-                CloseHandle(cmdProc.hProcess);
-
-                DeleteProcThreadAttributeList(startupInfo.lpAttributeList);
-                free(startupInfo.lpAttributeList);
+                WaitForMultipleObjects(sizeof(ctx.events) / sizeof(HANDLE), ctx.events, FALSE,
+                                        INFINITE);
             }
 
-            ClosePseudoConsole(hpcon);
+            CloseHandle(cmdProc.hThread);
+            CloseHandle(cmdProc.hProcess);
 
-            if (INVALID_HANDLE_VALUE != ctx.pipeOut) {
-                CloseHandle(ctx.pipeOut);
-            }
-            if (INVALID_HANDLE_VALUE != ctx.pipeIn) {
-                CloseHandle(ctx.pipeIn);
-            }
-
-            CloseHandle(ctx.events[0]);
+            DeleteProcThreadAttributeList(startupInfo.lpAttributeList);
+            free(startupInfo.lpAttributeList);
         }
-    }
 
+        ClosePseudoConsole(hpcon);
+
+        if (INVALID_HANDLE_VALUE != ctx.pipeOut) {
+            CloseHandle(ctx.pipeOut);
+        }
+        if (INVALID_HANDLE_VALUE != ctx.pipeIn) {
+            CloseHandle(ctx.pipeIn);
+        }
+
+        CloseHandle(ctx.events[0]);
+    } 
     return S_OK == hr ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
@@ -203,6 +199,9 @@ static HRESULT CreatePseudoConsoleAndPipes(HPCON* hpcon, Context* ctx) {
         if (GetConsoleScreenBufferInfo(hConsole, &csbi)) {
             consoleSize.X = csbi.srWindow.Right - csbi.srWindow.Left + 1;
             consoleSize.Y = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        } else {
+            consoleSize.X = 120;
+            consoleSize.Y = 25;
         }
         hr = CreatePseudoConsole(consoleSize, pipePtyIn, pipePtyOut, 0, hpcon);
 
