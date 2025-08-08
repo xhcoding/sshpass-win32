@@ -48,6 +48,7 @@ static void __cdecl InputHandlerThread(LPVOID);
 
 int main(int argc, const char* argv[]) {
     Context ctx;
+    uint32_t childExitCode = 0;
 
     ParseArgs(argc, argv, &ctx);
 
@@ -87,6 +88,8 @@ int main(int argc, const char* argv[]) {
 
                 WaitForMultipleObjects(sizeof(ctx.events) / sizeof(HANDLE), ctx.events, FALSE,
                                         INFINITE);
+
+                GetExitCodeProcess(cmdProc.hProcess, &childExitCode);
             }
 
             CloseHandle(cmdProc.hThread);
@@ -107,7 +110,7 @@ int main(int argc, const char* argv[]) {
 
         CloseHandle(ctx.events[0]);
     } 
-    return S_OK == hr ? EXIT_SUCCESS : EXIT_FAILURE;
+    return S_OK == hr ? childExitCode : EXIT_FAILURE;
 }
 
 static void ParseArgs(int argc, const char* argv[], Context* ctx) {
