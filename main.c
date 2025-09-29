@@ -1,10 +1,12 @@
 ﻿#include <Windows.h>
+#include <wchar.h>
 #include <process.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strsafe.h>
+#include <locale.h>
 
 #include "argparse.h"
 
@@ -16,7 +18,7 @@ static const char* const usages[] = {
 typedef struct {
     enum { PWT_STDIN, PWT_FILE, PWT_FD, PWT_PASS } pwtype;
     union {
-        const char* filename;
+        const wchar_t* filename;
         int64_t fd;
         const char* password;
     } pwsrc;
@@ -24,7 +26,7 @@ typedef struct {
     const char* passPrompt;
     int verbose;
 
-    char* cmd;
+    wchar_t* cmd;
 } Args;
 
 typedef struct {
@@ -38,19 +40,87 @@ typedef struct {
     HANDLE events[2];
 } Context;
 
-static void ParseArgs(int argc, const char* argv[], Context* ctx);
+static void ParseArgs(int argc, const wchar_t** wargv, char** argv, Context* ctx);
 static void WritePass(Context* ctx);
 static HRESULT CreatePseudoConsoleAndPipes(HPCON* hpcon, Context* ctx);
-static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXA* startupInfo,
+static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXW* startupInfo,
                                                             HPCON hpcon);
 static void __cdecl PipeListener(LPVOID);
 static void __cdecl InputHandlerThread(LPVOID);
 
-int main(int argc, const char* argv[]) {
-    Context ctx;
-    uint32_t childExitCode = 0;
+static wchar_t* ToUtf16(const char* utf8) {
+    if (utf8 == NULL) {
+        return NULL;
+    }
+    wchar_t* utf16 = NULL;
+    int buf_size = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, NULL, 0);
+    if (buf_size == 0) {
+        return NULL;
+    }
+    utf16 = malloc(sizeof(wchar_t) * (buf_size + 1)); // free when process exit
+    buf_size = MultiByteToWideChar(CP_UTF8, 0, utf8, -1, utf16, buf_size);
+    if (buf_size == 0) {
+        free(utf16);
+        return NULL;
+    }
+    utf16[buf_size] = L'\0';
+    return utf16;
+}
 
-    ParseArgs(argc, argv, &ctx);
+static char* ToUtf8(const wchar_t* wstr) {
+    if (wstr == NULL) {
+        return NULL;
+    }
+
+    int len = WideCharToMultiByte(CP_UTF8, 0, wstr, -1, NULL, 0, NULL, NULL);
+    if (len == 0) {
+        return NULL;
+    }
+
+    char* utf8 = (char*)malloc(len); // free when the process exit
+    if (utf8 == NULL) {
+        return NULL;
+    }
+
+    if (WideCharToMultiByte(CP_UTF8, 0, wstr, -1, utf8, len, NULL, NULL) == 0) {
+        free(utf8);
+        return NULL;
+    }
+
+    return utf8;
+}
+
+static char** ConvertArgcToMultiByte(int argc, const wchar_t* argv[])
+{
+    char** ret = malloc(argc * sizeof(char*)); // free when the process exit
+    if (ret == NULL) {
+        return NULL;
+    }
+    for (int i = 0; i < argc; i++) {
+        ret[i] = ToUtf8(argv[i]);
+    }
+    return ret;
+}
+
+static void SetupConsole(void) {
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+    setlocale(LC_ALL, ".UTF-8");
+}
+
+
+int wmain(int argc, const wchar_t* argv[]) {
+    Context ctx;
+    DWORD childExitCode = 0;
+
+    SetupConsole();
+
+    char** argvUtf8 = ConvertArgcToMultiByte(argc, argv);
+    if(argvUtf8 == NULL) {
+        return EXIT_FAILURE;
+    }
+
+    ParseArgs(argc, argv, argvUtf8, &ctx);
 
     HRESULT hr = E_UNEXPECTED;
 
@@ -72,10 +142,10 @@ int main(int argc, const char* argv[]) {
     if (S_OK == hr) {
         HANDLE pipeListener = (HANDLE) _beginthread(PipeListener, 0, &ctx);
 
-        STARTUPINFOEXA startupInfo = {0};
+        STARTUPINFOEXW startupInfo = {0};
         if (S_OK == InitializeStartupInfoAttachedToPseudoConsole(&startupInfo, hpcon)) {
             PROCESS_INFORMATION cmdProc;
-            hr = CreateProcessA(NULL, (char*) ctx.args.cmd, NULL, NULL, FALSE,
+            hr = CreateProcessW(NULL, ctx.args.cmd, NULL, NULL, FALSE,
                                 EXTENDED_STARTUPINFO_PRESENT, NULL, NULL,
                                 &startupInfo.StartupInfo, &cmdProc)
                             ? S_OK
@@ -109,11 +179,11 @@ int main(int argc, const char* argv[]) {
         }
 
         CloseHandle(ctx.events[0]);
-    } 
+    }
     return S_OK == hr ? childExitCode : EXIT_FAILURE;
 }
 
-static void ParseArgs(int argc, const char* argv[], Context* ctx) {
+static void ParseArgs(int argc, const wchar_t* wargv[], char** argv, Context* ctx) {
     const char* filename = NULL;
     int64_t number = 0;
     const char* strpass = NULL;
@@ -121,6 +191,7 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
 
     const char* passPrompt = NULL;
     int verbose = 0;
+    int totalArgc = argc;
 
     struct argparse_option options[] = {
             OPT_HELP(),
@@ -142,7 +213,7 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
 
     struct argparse argparse;
     argparse_init(&argparse, options, usages, ARGPARSE_STOP_AT_NON_OPTION);
-    argc = argparse_parse(&argparse, argc, argv);
+    argc = argparse_parse(&argparse, argc, (const char**)argv);
     if (argc == 0) {
         argparse_usage(&argparse);
         exit(EXIT_FAILURE);
@@ -151,7 +222,7 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
     ctx->args.verbose = verbose;
     if (filename != NULL) {
         ctx->args.pwtype = PWT_FILE;
-        ctx->args.pwsrc.filename = filename;
+        ctx->args.pwsrc.filename = ToUtf16(filename);
     } else if (number != 0) {
         ctx->args.pwtype = PWT_FD;
         ctx->args.pwsrc.fd = number;
@@ -172,19 +243,22 @@ static void ParseArgs(int argc, const char* argv[], Context* ctx) {
     }
 
     int cmdLen = 0;
+    int parsedArgc = totalArgc - argc;
     for (int i = 0; i < argc; i++) {
-        cmdLen += strlen(argv[i]) + 2;
+        cmdLen += wcslen(wargv[i + parsedArgc]) + 2;
     }
 
-    ctx->args.cmd = malloc(sizeof(char) * cmdLen);
-    memset(ctx->args.cmd, 0, sizeof(char) * cmdLen);
+    ctx->args.cmd = malloc(sizeof(wchar_t) * cmdLen);
+    memset(ctx->args.cmd, 0, sizeof(wchar_t) * cmdLen);
     for (int i = 0; i < argc; i++) {
-        StringCchCatA(ctx->args.cmd, sizeof(char) * cmdLen, argv[i]);
-        StringCchCatA(ctx->args.cmd, sizeof(char) * cmdLen, " ");
+        StringCchCatW(ctx->args.cmd, sizeof(wchar_t) * cmdLen, wargv[i + parsedArgc]);
+        StringCchCatW(ctx->args.cmd, sizeof(wchar_t) * cmdLen, L" ");
     }
 
     if (ctx->args.verbose) {
-        fprintf(stdout, "cmd: %s\n", ctx->args.cmd);
+        char* cmd = ToUtf8(ctx->args.cmd);
+        fprintf(stdout, "cmd: %s\n", cmd);
+        free(cmd);
     }
 }
 
@@ -219,7 +293,7 @@ static HRESULT CreatePseudoConsoleAndPipes(HPCON* hpcon, Context* ctx) {
     return hr;
 }
 
-static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXA* startupInfo,
+static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXW* startupInfo,
                                                             HPCON hpcon) {
     HRESULT hr = E_UNEXPECTED;
     if (startupInfo == NULL) {
@@ -227,7 +301,7 @@ static HRESULT InitializeStartupInfoAttachedToPseudoConsole(STARTUPINFOEXA* star
     }
 
     size_t attrListSize;
-    startupInfo->StartupInfo.cb = sizeof(STARTUPINFOEXA);
+    startupInfo->StartupInfo.cb = sizeof(STARTUPINFOEXW);
 
     InitializeProcThreadAttributeList(NULL, 1, 0, &attrListSize);
 
@@ -290,7 +364,7 @@ static State ProcessOutput(Context* ctx, const char* buffer, DWORD len, State st
     return nextState;
 }
 
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 8192
 
 static void __cdecl PipeListener(LPVOID arg) {
     Context* ctx = arg;
@@ -347,7 +421,7 @@ static void WritePass(Context* ctx) {
         WritePassHandle(ctx, (HANDLE) ctx->args.pwsrc.fd);
         break;
     case PWT_FILE: {
-        HANDLE file = CreateFileA(ctx->args.pwsrc.filename, GENERIC_READ, FILE_SHARE_READ, NULL,
+        HANDLE file = CreateFileW(ctx->args.pwsrc.filename, GENERIC_READ, FILE_SHARE_READ, NULL,
                                   OPEN_EXISTING, FILE_ATTRIBUTE_READONLY, NULL);
         if (file != INVALID_HANDLE_VALUE) {
             WritePassHandle(ctx, file);
