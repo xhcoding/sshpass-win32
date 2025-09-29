@@ -443,7 +443,9 @@ static void __cdecl InputHandlerThread(LPVOID arg) {
     DWORD mode;
 
     GetConsoleMode(hStdin, &mode);
-    SetConsoleMode(hStdin, (mode & ~ENABLE_LINE_INPUT) & ~ENABLE_ECHO_INPUT);
+    mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+    mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+    SetConsoleMode(hStdin, mode);
 
     char buffer;
     DWORD bytesRead, bytesWritten;
