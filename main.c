@@ -208,8 +208,11 @@ static void ParseArgs(int argc, const wchar_t* wargv[], char** argv, Context* ct
     int autoConfirm = 0;
     int totalArgc = argc;
 
+    int showVersion = 0;
+
     struct argparse_option options[] = {
             OPT_HELP(),
+            OPT_BOOLEAN('V', "version", &showVersion, "Print version information", NULL, 0, 0),
             OPT_GROUP("Password options: With no options - password will be taken from stdin"),
             OPT_STRING('f', NULL, &filename, "Take password to use from file", NULL, 0, 0),
             OPT_INTEGER('d', NULL, &number, "Use number as file descriptor for getting password",
@@ -230,6 +233,12 @@ static void ParseArgs(int argc, const wchar_t* wargv[], char** argv, Context* ct
     struct argparse argparse;
     argparse_init(&argparse, options, usages, ARGPARSE_STOP_AT_NON_OPTION);
     argc = argparse_parse(&argparse, argc, (const char**)argv);
+
+    if (showVersion) {
+        fprintf(stdout, "sshpass-win32 %s\n", SSHPASS_VERSION);
+        exit(EXIT_SUCCESS);
+    }
+
     if (argc == 0) {
         argparse_usage(&argparse);
         exit(EXIT_FAILURE);
