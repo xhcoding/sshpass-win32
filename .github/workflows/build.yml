@@ -5,21 +5,38 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: setenv
-        run: echo "ACTIONS_ALLOW_UNSECURE_COMMANDS=true" >> $GITHUB_ENV
-
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
-      - uses: jwlawson/actions-setup-cmake@v1.13
+      - uses: jwlawson/actions-setup-cmake@v2
+
+      - name: resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = git tag --sort=-v:refname | Select-Object -First 1
+          if (-not $tag) {
+            throw "No git tags found."
+          }
+          "git_tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       
       - name: configure
-        run: cmake -S . -B build -G"Visual Studio 17 2022"
+        run: cmake -S . -B build -G"Visual Studio 17 2022" -DSSHPASS_GIT_TAG="${{ steps.version.outputs.git_tag }}"
 
       - name: build
         run: cmake --build build --config release
 
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sshpass
+          path: build/Release/sshpass.exe
+          if-no-files-found: error
+
       - name: Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
             files: build/Release/sshpass.exe

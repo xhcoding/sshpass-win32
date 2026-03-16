@@ -1,12 +1,51 @@
 cmake_minimum_required(VERSION 3.20)
 
-project(sshpass VERSION 1.0.7)
+set(SSHPASS_VERSION_TAG "")
+
+if(DEFINED SSHPASS_GIT_TAG AND NOT SSHPASS_GIT_TAG STREQUAL "")
+  set(SSHPASS_VERSION_TAG "${SSHPASS_GIT_TAG}")
+else()
+  find_package(Git QUIET)
+  if(GIT_FOUND AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    execute_process(
+      COMMAND "${GIT_EXECUTABLE}" tag --sort=-v:refname
+      WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+      RESULT_VARIABLE SSHPASS_GIT_TAG_RESULT
+      OUTPUT_VARIABLE SSHPASS_GIT_TAGS
+      ERROR_QUIET
+      OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
+    if(SSHPASS_GIT_TAG_RESULT EQUAL 0 AND NOT SSHPASS_GIT_TAGS STREQUAL "")
+      string(REPLACE "\r\n" "\n" SSHPASS_GIT_TAGS "${SSHPASS_GIT_TAGS}")
+      string(REPLACE "\r" "\n" SSHPASS_GIT_TAGS "${SSHPASS_GIT_TAGS}")
+      string(REGEX MATCH "^[^\n]+" SSHPASS_VERSION_TAG "${SSHPASS_GIT_TAGS}")
+    endif()
+  endif()
+endif()
+
+if(NOT SSHPASS_VERSION_TAG)
+  set(SSHPASS_VERSION_TAG "v0.0.0")
+endif()
+
+string(REGEX REPLACE "^refs/tags/" "" SSHPASS_VERSION_TAG "${SSHPASS_VERSION_TAG}")
+string(REGEX REPLACE "^v" "" SSHPASS_VERSION_STRING "${SSHPASS_VERSION_TAG}")
+string(REGEX MATCH "^[0-9.]+" SSHPASS_PROJECT_VERSION "${SSHPASS_VERSION_STRING}")
+
+if(NOT SSHPASS_PROJECT_VERSION)
+  message(WARNING "Could not derive a CMake project version from tag '${SSHPASS_VERSION_TAG}'. Falling back to 0.0.0.")
+  set(SSHPASS_PROJECT_VERSION "0.0.0")
+endif()
+
+project(sshpass VERSION "${SSHPASS_PROJECT_VERSION}")
+
+message(STATUS "Configuring sshpass version ${SSHPASS_VERSION_STRING} from tag '${SSHPASS_VERSION_TAG}'")
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 add_executable(${PROJECT_NAME} main.c argparse.c)
 add_compile_options(/W4 /utf8)
-target_compile_definitions(${PROJECT_NAME} PRIVATE SSHPASS_VERSION="${PROJECT_VERSION}")
+target_compile_definitions(${PROJECT_NAME} PRIVATE SSHPASS_VERSION="${SSHPASS_VERSION_STRING}")
 set_property(TARGET ${PROJECT_NAME} PROPERTY
   MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
