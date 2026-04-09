@@ -356,16 +356,67 @@ static BOOL IsWaitConfirmation(const char* buffer) {
     return FALSE;
 }
 
+static void WriteToStdOut(Context* ctx, const char* buffer, size_t len) {
+    DWORD written;
+
+    if (len == 0) {
+        return;
+    }
+
+    WriteFile(ctx->stdOut, buffer, (DWORD) len, &written, NULL);
+}
+
 typedef enum { INIT, VERIFY, EXEC, END } State;
 
-static State ProcessOutput(Context* ctx, const char* buffer, DWORD len, State state) {
+static void WriteFilteredChunk(Context* ctx, const char* buffer, size_t len,
+                               const char* hiddenPattern) {
+    char* match;
+    const char* lineStart;
+    size_t hiddenEnd;
+
+    if (hiddenPattern == NULL) {
+        WriteToStdOut(ctx, buffer, len);
+        return;
+    }
+
+    if (hiddenPattern[0] == '\0') {
+        WriteToStdOut(ctx, buffer, len);
+        return;
+    }
+
+    match = strstr(buffer, hiddenPattern);
+    if (match == NULL) {
+        WriteToStdOut(ctx, buffer, len);
+        return;
+    }
+
+    lineStart = match;
+    while (lineStart > buffer && lineStart[-1] != '\r' && lineStart[-1] != '\n') {
+        --lineStart;
+    }
+
+    if (lineStart > buffer) {
+        WriteToStdOut(ctx, buffer, (size_t) (lineStart - buffer));
+    }
+
+    hiddenEnd = (size_t) (match - buffer) + strlen(hiddenPattern);
+    if (hiddenEnd < len) {
+        WriteToStdOut(ctx, buffer + hiddenEnd, len - hiddenEnd);
+    }
+}
+
+static State ProcessOutput(Context* ctx, const char* buffer, DWORD len,
+                           State state, int* confirmationSent) {
     State nextState;
-    DWORD written;
+
+    if (ctx->args.autoConfirm && !(*confirmationSent) &&
+        IsWaitConfirmation(buffer)) {
+        WriteFile(ctx->pipeOut, "yes\n", 4, NULL, NULL);
+        *confirmationSent = 1;
+    }
+
     switch (state) {
     case INIT: {
-        if (ctx->args.autoConfirm && IsWaitConfirmation(buffer)) {
-             WriteFile(ctx->pipeOut, "yes\n", 4, NULL, NULL);
-        }
         if (!IsWaitInputPass(ctx, buffer, len)) {
             nextState = INIT;
         } else {
@@ -378,12 +429,10 @@ static State ProcessOutput(Context* ctx, const char* buffer, DWORD len, State st
             fprintf(stderr, "Password is error!");
             nextState = END;
         } else {
-            WriteFile(ctx->stdOut, buffer, len, &written, NULL);
             nextState = EXEC;
         }
     } break;
     case EXEC: {
-        WriteFile(ctx->stdOut, buffer, len, &written, NULL);
         nextState = EXEC;
     } break;
     case END: {
@@ -397,6 +446,7 @@ static State ProcessOutput(Context* ctx, const char* buffer, DWORD len, State st
 
 static void __cdecl PipeListener(LPVOID arg) {
     Context* ctx = arg;
+    int confirmationSent = 0;
 
     char buffer[BUFFER_SIZE + 1] = {0};
 
@@ -407,12 +457,22 @@ static void __cdecl PipeListener(LPVOID arg) {
     State state = INIT;
 
     while (1) {
+        State nextState;
+
         fRead = ReadFile(ctx->pipeIn, buffer, BUFFER_SIZE, &bytesRead, NULL);
         if (!fRead || bytesRead == 0) {
             break;
         }
         buffer[bytesRead] = 0;
-        state = ProcessOutput(ctx, buffer, bytesRead, state);
+        nextState = ProcessOutput(ctx, buffer, bytesRead, state, &confirmationSent);
+
+        if (state == EXEC) {
+            WriteToStdOut(ctx, buffer, bytesRead);
+        } else {
+            WriteFilteredChunk(ctx, buffer, bytesRead, ctx->args.passPrompt);
+        }
+
+        state = nextState;
         if (state == END) {
             break;
         }
@@ -476,20 +536,16 @@ static void __cdecl InputHandlerThread(LPVOID arg) {
     mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
     SetConsoleMode(hStdin, mode);
 
-    wchar_t buffer[64];
-    DWORD charsRead, bytesWritten;
+    char buffer[64];
+    DWORD bytesRead, bytesWritten;
 
     while (1) {
-        if (!ReadConsoleW(hStdin, buffer, sizeof(buffer) / sizeof(wchar_t), &charsRead, NULL) || charsRead == 0) {
+        if (!ReadFile(hStdin, buffer, sizeof(buffer), &bytesRead, NULL) || bytesRead == 0) {
             break;
         }
 
-        char utf8Buffer[256];
-        int utf8Len = WideCharToMultiByte(CP_UTF8, 0, buffer, charsRead, utf8Buffer, sizeof(utf8Buffer), NULL, NULL);
-        if (utf8Len > 0) {
-            if (!WriteFile(ctx->pipeOut, utf8Buffer, utf8Len, &bytesWritten, NULL)) {
-                break;
-            }
+        if (!WriteFile(ctx->pipeOut, buffer, bytesRead, &bytesWritten, NULL)) {
+            break;
         }
     }
 }
