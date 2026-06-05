@@ -28,6 +28,7 @@ scoop install sshpass
 Usage: sshpass [ options ] command arguments
 
     -h, --help    show this help message and exit
+    -V, --version Print version information
 
 Password options: With no options - password will be taken from stdin
     -f=<str>      Take password to use from file
